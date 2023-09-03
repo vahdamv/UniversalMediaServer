@@ -16,11 +16,13 @@
  */
 package net.pms.platform;
 
-import com.sun.jna.Platform;
-import com.sun.jna.platform.FileUtils;
-import com.vdurmont.semver4j.Semver;
-import java.awt.*;
+import java.awt.Desktop;
+import java.awt.Image;
+import java.awt.MenuItem;
+import java.awt.SystemTray;
+import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
@@ -33,8 +35,20 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+
 import javax.annotation.concurrent.GuardedBy;
+
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.sun.jna.Platform;
+import com.sun.jna.platform.FileUtils;
+import com.vdurmont.semver4j.Semver;
+
 import net.pms.Messages;
 import net.pms.PMS;
 import net.pms.io.IPipeProcess;
@@ -46,27 +60,25 @@ import net.pms.platform.mac.MacUtils;
 import net.pms.platform.posix.POSIXProcessTerminator;
 import net.pms.platform.solaris.SolarisUtils;
 import net.pms.platform.windows.WindowsUtils;
-import net.pms.service.process.ProcessManager;
 import net.pms.service.process.AbstractProcessTerminator;
+import net.pms.service.process.ProcessManager;
 import net.pms.service.sleep.AbstractSleepWorker;
 import net.pms.service.sleep.PreventSleepMode;
 import net.pms.service.sleep.SleepManager;
-import net.pms.util.PropertiesUtil;
 import net.pms.util.StringUtil;
 import net.pms.util.Version;
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
- * Base implementation for the {@link IPlatformUtils} class for the generic cases.
+ * Base implementation for the {@link IPlatformUtils} class for the generic
+ * cases.
+ * 
  * @author zsombor
  *
  */
 public class PlatformUtils implements IPlatformUtils {
 	private static final Logger LOGGER = LoggerFactory.getLogger(PlatformUtils.class);
 
-	/** *  The singleton platform dependent {@link IPlatformUtils} instance */
+	/** * The singleton platform dependent {@link IPlatformUtils} instance */
 	public static final IPlatformUtils INSTANCE = PlatformUtils.createInstance();
 	protected static final Object IS_ADMIN_LOCK = new Object();
 	protected static final Object DEFAULT_FOLDERS_LOCK = new Object();
@@ -152,9 +164,10 @@ public class PlatformUtils implements IPlatformUtils {
 	public boolean browseURI(String url) {
 		try {
 			URI uri = new URI(url);
-			if (Platform.isLinux() && (Runtime.getRuntime().exec(new String[] {"which", "xdg-open"}).getInputStream().read() != -1)) {
+			if (Platform.isLinux() && (Runtime.getRuntime().exec(new String[] { "which", "xdg-open" }).getInputStream()
+					.read() != -1)) {
 				// Workaround for Linux as Desktop.browse() doesn't work on some Linux
-				Runtime.getRuntime().exec(new String[] {"xdg-open", uri.toString()});
+				Runtime.getRuntime().exec(new String[] { "xdg-open", uri.toString() });
 				return true;
 			} else if (Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
 				Desktop.getDesktop().browse(uri);
@@ -162,7 +175,7 @@ public class PlatformUtils implements IPlatformUtils {
 			} else if (Platform.isMac()) {
 				// On OS X, open the given URI with the "open" command.
 				// This will open HTTP URLs in the default browser.
-				Runtime.getRuntime().exec(new String[] {"open", uri.toString() });
+				Runtime.getRuntime().exec(new String[] { "open", uri.toString() });
 				return true;
 			} else {
 				LOGGER.error("Action BROWSE isn't supported on this platform");
@@ -181,41 +194,25 @@ public class PlatformUtils implements IPlatformUtils {
 	@Override
 	public void addSystemTray(final LooksFrame frame) {
 		if (SystemTray.isSupported()) {
-			SystemTray tray = SystemTray.getSystemTray();
-
-			Image trayIconImage = resolveTrayIcon();
-
-			PopupMenu popup = new PopupMenu();
 			MenuItem defaultItem = new MenuItem(Messages.getString("Quit"));
 			MenuItem traceItem = new MenuItem(Messages.getString("SettingsOld"));
-
-			defaultItem.addActionListener((ActionEvent e) -> PMS.quit());
-
-			traceItem.addActionListener((ActionEvent e) -> frame.setVisible(true));
-
-			if (PMS.getConfiguration().useWebPlayerServer()) {
-				MenuItem webPlayerItem = new MenuItem(Messages.getString("WebPlayer"));
-				webPlayerItem.addActionListener((ActionEvent e) -> browseURI(PMS.get().getWebPlayerServer().getUrl()));
-				popup.add(webPlayerItem);
-			}
-
 			MenuItem webGuiItem = new MenuItem(Messages.getString("Settings"));
-			webGuiItem.addActionListener((ActionEvent e) -> browseURI(PMS.get().getGuiServer().getUrl()));
-			popup.add(webGuiItem);
-			popup.add(traceItem);
-			popup.add(defaultItem);
-
-			final TrayIcon trayIcon = new TrayIcon(trayIconImage, PropertiesUtil.getProjectProperties().get("project.name"), popup);
-
-			trayIcon.setImageAutoSize(true);
-			trayIcon.addActionListener((ActionEvent e) -> {
-				browseURI(PMS.get().getGuiServer().getUrl());
-			});
-			try {
-				tray.add(trayIcon);
-			} catch (AWTException e) {
-				LOGGER.debug("Caught exception", e);
+			MenuItem webPlayerItem = null;
+			if (PMS.getConfiguration().useWebPlayerServer()) {
+				webPlayerItem = new MenuItem(Messages.getString("WebPlayer"));
 			}
+
+			Map<MenuItem, ActionListener> menuItems = new LinkedHashMap<>();
+			if (webPlayerItem != null) {
+				menuItems.put(webPlayerItem, (ActionEvent e) -> browseURI(PMS.get().getWebPlayerServer().getUrl()));
+			}
+			menuItems.put(webGuiItem, (ActionEvent e) -> browseURI(PMS.get().getGuiServer().getUrl()));
+			menuItems.put(traceItem, (ActionEvent e) -> frame.setVisible(true));
+			menuItems.put(defaultItem, (ActionEvent e) -> PMS.quit());
+			Image trayIconImage = resolveTrayIcon();
+
+			SystemTrayService systemTrayService = new SystemTrayService(menuItems, trayIconImage);
+			systemTrayService.loadTrayIcon();
 		}
 	}
 
@@ -225,8 +222,9 @@ public class PlatformUtils implements IPlatformUtils {
 	 * @param ni Interface to fetch the mac address for
 	 * @return the mac address as bytes, or null if it couldn't be fetched.
 	 * @throws SocketException
-	 *             This won't happen on Mac OS, since the NetworkInterface is
-	 *             only used to get a name.
+	 *                         This won't happen on Mac OS, since the
+	 *                         NetworkInterface is
+	 *                         only used to get a name.
 	 */
 	@Override
 	public byte[] getHardwareAddress(NetworkInterface ni) throws SocketException {
@@ -238,14 +236,14 @@ public class PlatformUtils implements IPlatformUtils {
 	 * ping count and packet size.
 	 *
 	 * @param hostAddress The host address.
-	 * @param count The ping count.
-	 * @param packetSize The packet size.
+	 * @param count       The ping count.
+	 * @param packetSize  The packet size.
 	 * @return The ping command.
 	 */
 	@Override
 	public String[] getPingCommand(String hostAddress, int count, int packetSize) {
-		return new String[] {"ping", /* count */"-c", Integer.toString(count), /* size */
-				"-s", Integer.toString(packetSize), hostAddress};
+		return new String[] { "ping", /* count */"-c", Integer.toString(count), /* size */
+				"-s", Integer.toString(packetSize), hostAddress };
 	}
 
 	@Override
@@ -284,7 +282,7 @@ public class PlatformUtils implements IPlatformUtils {
 
 	@Override
 	public void moveToTrash(File file) throws IOException {
-		FileUtils.getInstance().moveToTrash(new File[]{file});
+		FileUtils.getInstance().moveToTrash(new File[] { file });
 	}
 
 	@Override
@@ -298,7 +296,8 @@ public class PlatformUtils implements IPlatformUtils {
 				if (StringUtils.isNotBlank(userHome)) {
 					result.add(Paths.get(userHome));
 				}
-				//TODO: (Nad) Implement xdg-user-dir for Linux when EnginesRegistration is merged:
+				// TODO: (Nad) Implement xdg-user-dir for Linux when EnginesRegistration is
+				// merged:
 				// xdg-user-dir DESKTOP
 				// xdg-user-dir DOWNLOAD
 				// xdg-user-dir PUBLICSHARE
@@ -477,7 +476,7 @@ public class PlatformUtils implements IPlatformUtils {
 		}
 		if (!jvmExecutable.exists() || jvmExecutable.isDirectory()) {
 			LOGGER.error("Can´t find Java executable \"{}\", falling back to pathless execution using \"{}\"",
-				jvmExecutable.getAbsolutePath(), jvmExecutableName);
+					jvmExecutable.getAbsolutePath(), jvmExecutableName);
 			restart.add(jvmExecutableName);
 		} else {
 			restart.add(StringUtil.quoteArg(jvmExecutable.getAbsolutePath()));
