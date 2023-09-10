@@ -211,8 +211,8 @@ public class PlatformUtils implements IPlatformUtils {
 			menuItems.put(defaultItem, (ActionEvent e) -> PMS.quit());
 			Image trayIconImage = resolveTrayIcon();
 
-			SystemTrayService systemTrayService = new SystemTrayService(menuItems, trayIconImage);
-			systemTrayService.loadTrayIcon();
+			DefaultSystemTrayService systemTrayService = new DefaultSystemTrayService(menuItems);
+			systemTrayService.loadTrayIcon(trayIconImage);
 		}
 	}
 
